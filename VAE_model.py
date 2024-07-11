@@ -72,6 +72,7 @@ def DSSIM_3D(x, y, window_size=5, reduction='mean', window_aggregation='mean'):
 
 
 
+
 class VAE_encoder(nn.Module):
     """
     Class for a 2D Encoder
@@ -96,6 +97,7 @@ class VAE_encoder(nn.Module):
         self.lat_mean = nn.Linear(256, self.latent)
         self.lat_logvar = nn.Linear(256, self.latent)
         
+        
     def reparameterize(self, z_mean, z_logvar):
         """
         This function performs the reparameterization trick.
@@ -110,6 +112,7 @@ class VAE_encoder(nn.Module):
         eps = torch.randn_like(std)
         z = z_mean + std*eps
         return z
+    
         
     def forward(self, x):
         x = F.relu(self.conv1(x))
@@ -121,6 +124,7 @@ class VAE_encoder(nn.Module):
         z_logvar = self.lat_logvar(x)
         z = self.reparameterize(z_mean, z_logvar)
         return z, z_mean, z_logvar
+    
     
     def divergence_loss(self, z_mean, z_logvar, beta):
         """
@@ -142,6 +146,8 @@ class VAE_encoder(nn.Module):
     
     
     
+    
+    
 class VAE_decoder(nn.Module): 
     """
     Class for 2D VAE Decoder
@@ -155,13 +161,16 @@ class VAE_decoder(nn.Module):
         self.conv2 = nn.ConvTranspose3d(64, 32, kernel_size = 3, stride = 2, padding = 1)
         self.conv3 = nn.ConvTranspose3d(32 , 1, kernel_size = 3, stride = 2, padding = 1)
         
+        
     def forward(self, x):
+        print(f'Hola, soy forward de VAE_decoder y funciono!')
         x = F.relu(self.fc(x))
         x = x.view(-1, 128, 12, 14, 12) #This rearranges shapes in volumes
         x = F.relu(self.conv1(x))
         x = F.relu(self.conv2(x))
         x = F.sigmoid(self.conv3(x))
         return x
+    
 
     def loss_recon(self, x_target, x_recon):
         """
@@ -183,12 +192,14 @@ class VAE_decoder(nn.Module):
     
     
     
+    
 class VAE(nn.Module):
     
     def __init__(self, encoder, decoder):
         super().__init__()
         self.encoder = encoder
         self.decoder = decoder
+        
     
     def forward(self, x):
         z, z_mean, z_logvar = self.encoder(x)
@@ -196,6 +207,7 @@ class VAE(nn.Module):
         x_recon = self.decoder(z)
         
         return x_recon, z, z_mean, z_logvar
+    
     
     def loss(self, x_target, x_recon, z_mean, z_logvar, beta):
         
