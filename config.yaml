@@ -7,7 +7,7 @@ model:
   epochs: 5
   lr: 0.01
   optimizer: adam
-  batch_size: 4
+  batch_size: 3
 
 loader:
   load_folder:

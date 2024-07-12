@@ -115,10 +115,13 @@ class VAE_encoder(nn.Module):
     
         
     def forward(self, x):
+        
+        if len(x.shape) == 4:
+            x = x.unsqueeze(1) #Reshapes x into [batch_size, 1, depth, height, width]
         x = F.relu(self.conv1(x))
         x = F.relu(self.conv2(x))
         x = F.relu(self.conv3(x))
-        x = x.view(-1, 128 * 14 * 16 * 14 ) #flatten data to fit linear layer
+        x = x.view(-1, 128 * 12 * 14 * 12 ) #flatten data to fit linear layer
         x = F.relu(self.fc(x))
         z_mean = self.lat_mean(x)
         z_logvar = self.lat_logvar(x)
@@ -156,7 +159,7 @@ class VAE_decoder(nn.Module):
     def __init__(self, latent:int=10):
         super().__init__()
         self.latent = latent
-        self.fc = nn.Linear(self.latent, 128 * 14 * 16 * 14)
+        self.fc = nn.Linear(self.latent, 128 * 12 * 14 * 12)
         self.conv1 = nn.ConvTranspose3d(128, 64, kernel_size = 3, stride = 2, padding = 1) #Check this entire block
         self.conv2 = nn.ConvTranspose3d(64, 32, kernel_size = 3, stride = 2, padding = 1)
         self.conv3 = nn.ConvTranspose3d(32 , 1, kernel_size = 3, stride = 2, padding = 1)
