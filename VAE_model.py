@@ -129,7 +129,7 @@ class VAE_encoder(nn.Module):
         return z, z_mean, z_logvar
     
     
-    def divergence_loss(self, z_mean, z_logvar, beta):
+    def divergence_loss(self, z_mean, z_logvar):
         """
         Function for computing the KL divergence between
         two gaussians distributions. We assume priori distribution
@@ -160,18 +160,19 @@ class VAE_decoder(nn.Module):
         super().__init__()
         self.latent = latent
         self.fc = nn.Linear(self.latent, 128 * 12 * 14 * 12)
-        self.conv1 = nn.ConvTranspose3d(128, 64, kernel_size = 3, stride = 2, padding = 1) #Check this entire block
-        self.conv2 = nn.ConvTranspose3d(64, 32, kernel_size = 3, stride = 2, padding = 1)
-        self.conv3 = nn.ConvTranspose3d(32 , 1, kernel_size = 3, stride = 2, padding = 1)
+        # out_padding to fit reconstructed dimensiones to real dimensions. Computed using W_out formula for Trans conv.
+        self.conv1Trans = nn.ConvTranspose3d(128, 64, kernel_size = 3, stride = 2, padding = 1, output_padding = (0, 1, 0)) 
+        self.conv2Trans = nn.ConvTranspose3d(64, 32, kernel_size = 3, stride = 2, padding = 1, output_padding = (1, 0, 1))
+        self.conv3Trans = nn.ConvTranspose3d(32 , 1, kernel_size = 3, stride = 2, padding = 1, output_padding = (0, 0, 0))
         
         
     def forward(self, x):
         print(f'Hola, soy forward de VAE_decoder y funciono!')
         x = F.relu(self.fc(x))
         x = x.view(-1, 128, 12, 14, 12) #This rearranges shapes in volumes
-        x = F.relu(self.conv1(x))
-        x = F.relu(self.conv2(x))
-        x = F.sigmoid(self.conv3(x))
+        x = F.relu(self.conv1Trans(x))
+        x = F.relu(self.conv2Trans(x))
+        x = F.sigmoid(self.conv3Trans(x))
         return x
     
 
@@ -214,11 +215,11 @@ class VAE(nn.Module):
     
     def loss(self, x_target, x_recon, z_mean, z_logvar, beta):
         
-        recon_loss = self.encoder.loss_recon(x_target, x_recon)
-        div_loss = beta*self.decoder.divergence_loss(z_mean, z_logvar)
+        div_loss = beta*self.encoder.divergence_loss(z_mean, z_logvar)
+        recon_loss = self.decoder.loss_recon(x_target, x_recon)
         total_loss = recon_loss - beta*div_loss
         
-        return  total_loss, recon_loss, div_loss
+        return  total_loss, div_loss, recon_loss
         
 
     
