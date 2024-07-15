@@ -66,6 +66,7 @@ def epoch_train(model, train_set, optimizer, config):
     print(f'Hola, soy el comienzo de epoch train y funciono!')
     
     beta = config['model']['loss']['beta']
+    batch_size = config['model']['batch_size']
     loss_epoch = 0.0
     batch_count = 0
     
@@ -79,8 +80,10 @@ def epoch_train(model, train_set, optimizer, config):
         print(f'Hola, estoy justo entre optimizer.zero_grad y model(batch)')
         x_recon_batch, z, z_mean, z_logvar = model(batch)
         print(f'Hola, estoy justo DESPUES de model(batch)')
+        if len(x_recon_batch.shape) == 5:
+            x_recon_batch = x_recon_batch.squeeze(1)
         #Compute the loss of the batch
-        _, _, loss_batch = model.loss(batch, x_recon_batch, z_mean, z_logvar, beta)
+        _, _, loss_batch = model.loss(batch, x_recon_batch, z_mean, z_logvar, beta, batch_size)
         
         loss_batch.backward()
         optimizer.step()

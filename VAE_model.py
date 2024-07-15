@@ -129,7 +129,7 @@ class VAE_encoder(nn.Module):
         return z, z_mean, z_logvar
     
     
-    def divergence_loss(self, z_mean, z_logvar):
+    def divergence_loss(self, z_mean, z_logvar, batch_size):
         """
         Function for computing the KL divergence between
         two gaussians distributions. We assume priori distribution
@@ -145,6 +145,7 @@ class VAE_encoder(nn.Module):
         """
         
         KL_div_loss = -0.5 * torch.sum(1 + z_logvar - z_mean.pow(2) - z_logvar.exp())
+        KL_div_loss /= batch_size
         return KL_div_loss
     
     
@@ -213,9 +214,9 @@ class VAE(nn.Module):
         return x_recon, z, z_mean, z_logvar
     
     
-    def loss(self, x_target, x_recon, z_mean, z_logvar, beta):
+    def loss(self, x_target, x_recon, z_mean, z_logvar, beta, batch_size):
         
-        div_loss = beta*self.encoder.divergence_loss(z_mean, z_logvar)
+        div_loss = beta*self.encoder.divergence_loss(z_mean, z_logvar, batch_size)
         recon_loss = self.decoder.loss_recon(x_target, x_recon)
         total_loss = recon_loss - beta*div_loss
         
