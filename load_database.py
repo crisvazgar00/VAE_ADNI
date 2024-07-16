@@ -56,9 +56,10 @@ def find_pet(folder, prefix, extension, target_folder_name):
 def load_img_nii(file_list):
     #img_dic = {}
     img_list = []
+    img = np.zeros((90, 110, 90))
     for file_path in file_list:
-        img = nib.load(file_path)
-        img = img.get_fdata()
+        img_file = nib.load(file_path)
+        img[:,:-1,:] = img_file.get_fdata()[1:, :, 1:]
         img[np.isnan(img)] = 0
         #dim = img.shape
         #print(dim)
@@ -91,8 +92,9 @@ def normalization_cerebellum(img_list):
     
     """
     path = "C:/Program Files/spm12/toolbox/AAL3/ROI_MNI_V7.nii"
-    temp = nib.load(path)
-    temp = temp.get_fdata()
+    temp_file = nib.load(path)
+    temp = np.zeros((90,110,90))
+    temp[:,:-1,:] = temp_file.get_fdata()[1:,:,1:]
     
     #Set everything to 0 except for cerebellum labels (from 95 to 120)
     temp_cerebellum = np.zeros_like(temp)
@@ -117,7 +119,6 @@ def normalization_cerebellum(img_list):
     
     
     return img_list_norm
-
 
 
 

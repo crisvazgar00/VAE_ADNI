@@ -93,7 +93,7 @@ def epoch_train(model, train_set, optimizer, config):
     #Average over total number of batches
     loss_epoch /= batch_count
     
-    print('Hola, soy el final de epoch_train y funciono!')
+    #print('Hola, soy el final de epoch_train y funciono!')
     
     return loss_epoch
 
@@ -119,6 +119,7 @@ def train(config, model, train_set, epochs):
 
     loss_train = 0.0
     for epoch in range(epochs):
+        print(f'epoch nº: {epoch}')
         loss_epoch = epoch_train(model, train_set, optimizer, config)
         loss_train += loss_epoch
         

@@ -28,12 +28,12 @@ def SSIM_3D(x: Tensor, y: Tensor, window_size: int = 5, reduction: str = 'mean',
     """
     # Convert images to float and create patches
     patched_x = x.to(dtype=torch.float32).unfold(-3, window_size, window_size) \
-        .unfold(-2, window_size, window_size) \
-        .unfold(-1, window_size, window_size) \
+        .unfold(-3, window_size, window_size) \
+        .unfold(-3, window_size, window_size) \
         .reshape(x.shape[0], -1, window_size**3)
     patched_y = y.to(dtype=torch.float32).unfold(-3, window_size, window_size) \
-        .unfold(-2, window_size, window_size) \
-        .unfold(-1, window_size, window_size) \
+        .unfold(-3, window_size, window_size) \
+        .unfold(-3, window_size, window_size) \
         .reshape(y.shape[0], -1, window_size**3)
 
     # Compute statistics
@@ -75,7 +75,7 @@ def DSSIM_3D(x, y, window_size=5, reduction='mean', window_aggregation='mean'):
 
 class VAE_encoder(nn.Module):
     """
-    Class for a 2D Encoder
+    Class for a 3D Encoder
     """
     
     def __init__(self, latent:int=10):
@@ -154,7 +154,7 @@ class VAE_encoder(nn.Module):
     
 class VAE_decoder(nn.Module): 
     """
-    Class for 2D VAE Decoder
+    Class for 3D VAE Decoder
     """
     
     def __init__(self, latent:int=10):
@@ -163,17 +163,18 @@ class VAE_decoder(nn.Module):
         self.fc = nn.Linear(self.latent, 128 * 12 * 14 * 12)
         # out_padding to fit reconstructed dimensiones to real dimensions. Computed using W_out formula for Trans conv.
         self.conv1Trans = nn.ConvTranspose3d(128, 64, kernel_size = 3, stride = 2, padding = 1, output_padding = (0, 1, 0)) 
-        self.conv2Trans = nn.ConvTranspose3d(64, 32, kernel_size = 3, stride = 2, padding = 1, output_padding = (1, 0, 1))
-        self.conv3Trans = nn.ConvTranspose3d(32 , 1, kernel_size = 3, stride = 2, padding = 1, output_padding = (0, 0, 0))
+        self.conv2Trans = nn.ConvTranspose3d(64, 32, kernel_size = 3, stride = 2, padding = 1, output_padding = (0, 0, 0))
+        self.conv3Trans = nn.ConvTranspose3d(32 , 1, kernel_size = 3, stride = 2, padding = 1, output_padding = (1, 1, 1))
         
         
     def forward(self, x):
-        print(f'Hola, soy forward de VAE_decoder y funciono!')
+        #print(f'Hola, soy forward de VAE_decoder y funciono!')
         x = F.relu(self.fc(x))
         x = x.view(-1, 128, 12, 14, 12) #This rearranges shapes in volumes
         x = F.relu(self.conv1Trans(x))
         x = F.relu(self.conv2Trans(x))
         x = F.sigmoid(self.conv3Trans(x))
+        print(x.shape)
         return x
     
 
