@@ -177,8 +177,8 @@ class VAE_decoder(nn.Module):
         x = x.view(-1, 128, 12, 14, 12) #This rearranges shapes in volumes
         x = F.relu(self.conv1Trans(x))
         x = F.relu(self.conv2Trans(x))
-        x = F.sigmoid(self.conv3Trans(x))
-        print(x.shape)
+        #x = F.sigmoid(self.conv3Trans(x))
+        x = self.conv3Trans(x)
         return x
     
 

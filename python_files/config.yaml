@@ -4,14 +4,14 @@ model:
   latent: 5
   loss:
     beta: 1.0
-  epochs: 5
-  lr: 0.01
+  epochs: 50
+  lr: 0.001
   optimizer: adam
-  batch_size: 3
+  batch_size: 96
 
 loader:
   load_folder:
-    folder: C:/Users/Cristobal/Desktop/DATOS_PRUEBA
+    folder: C:/Users/Cristobal/Desktop/ADNI_BIDS
     prefix: r
     extension: .nii
     target_folder_name: pet

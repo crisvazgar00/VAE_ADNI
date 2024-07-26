@@ -89,6 +89,7 @@ def epoch_train(model, train_set, optimizer, config):
         
     #Average over total number of batches
     loss_epoch /= batch_count
+    print(f'loss epoch: {loss_epoch}')
     
     #print('Hola, soy el final de epoch_train y funciono!')
     
@@ -125,6 +126,10 @@ def train(config, model, train_set, epochs):
     return model
 
 
+
+
+
+"""
 def evaluate(config, eval_set, model):
     model.eval()
     recon_eval_imgs_list = []
@@ -141,7 +146,7 @@ def evaluate(config, eval_set, model):
         for img in eval_set:
             img_tensor = torch.tensor(img, dtype=torch.float32).to(device)
             
-            recon_img, _, _, _ = model(img_tensor)    
+            recon_img, z, z_mean, z_logvar = model(img_tensor)    
             
             if len(recon_img.shape) == 5:
                 recon_img = recon_img.squeeze(1)                     
@@ -149,7 +154,7 @@ def evaluate(config, eval_set, model):
             recon_eval_imgs_list.append(recon_img)
             
     return recon_eval_imgs_list
-
+"""
 
 
 
@@ -177,7 +182,7 @@ if __name__ == '__main__':
     model = model_VAE(config)
     model = train(config, model, train_set, epochs)  
     
-    recon_eval_imgs = evaluate(config, eval_set, model)
+    #recon_eval_imgs = evaluate(config, eval_set, model)
     
 
     
