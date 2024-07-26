@@ -4,6 +4,7 @@ import os
 import sys
 import numpy as np
 import yaml
+import nibabel as nib
 import matplotlib.pyplot as plt
 import torch
 
@@ -129,13 +130,20 @@ def train(config, model, train_set, epochs):
 
 
 
-"""
-def evaluate(config, eval_set, model):
+def test(config, test_set, model):
+    """
+    This function performs testing on the test dataset.
+    Set model to .eval() and torch.no_grad() to ensure model
+    does not change. Encode and decode test images using trained model.
+    Compute loss between real images and reconstructed data to check validity
+    of the model.
+    """
     model.eval()
-    recon_eval_imgs_list = []
+    recon_test_imgs_list = []
     with torch.no_grad():
-        loss = 0.0
         
+        #Load hyperparameters and device
+        beta = config['model']['loss']['beta']
         device_name = config['experiment']['device']
         device = torch.device(device_name if torch.cuda.is_available() else 'cpu')
     
@@ -143,18 +151,41 @@ def evaluate(config, eval_set, model):
         
         #Load model again into cuda device
         model = model.to(device)
-        for img in eval_set:
-            img_tensor = torch.tensor(img, dtype=torch.float32).to(device)
+        
+        loss_img = 0.0
+        count = 0
+        loss_test = 0.0
+        
+        for img in test_set:
+            #send img to GPU
+            input_tensor = torch.tensor(img, dtype=torch.float32).to(device)
             
-            recon_img, z, z_mean, z_logvar = model(img_tensor)    
+            #We need to add an extra dimension for [Batch_size] because it is
+            #needed for x.shape[0] in DSSIM computation
+            if len(input_tensor.shape) == 3:
+                input_tensor = input_tensor.unsqueeze(0)
+            #Encode and decode img
+            recon_img, z, z_mean, z_logvar = model(input_tensor)    
             
             if len(recon_img.shape) == 5:
-                recon_img = recon_img.squeeze(1)                     
+                #Remove extra dimension [Channel] from shape
+                recon_img = recon_img.squeeze(1)    
             
-            recon_eval_imgs_list.append(recon_img)
+            #compute loss between reconstructed image and input image
+            _, _, loss_img = model.loss(input_tensor, recon_img, z_mean, z_logvar, beta, batch_size = 1)
+            print(f'Loss of testing number {count}: {loss_img}')
             
-    return recon_eval_imgs_list
-"""
+            #Add to list
+            recon_test_imgs_list.append(recon_img)
+            
+            loss_test += loss_img
+            count += 1
+            
+        loss_test /= count   
+        print(f'Total loss of testing: {loss_test}') 
+            
+    return recon_test_imgs_list
+
 
 
 
@@ -177,12 +208,14 @@ if __name__ == '__main__':
     #Split dataset intro three sets
     splits = config['loader']['splits']
     train_set, eval_set, test_set = split_database(imgs_list_norm, splits)
+    print(f'Length of train_set: {len(train_set)}, eval_set: {len(eval_set)}, test_set: {len(test_set)}')
 
     epochs = config['model']['epochs']
     model = model_VAE(config)
     model = train(config, model, train_set, epochs)  
+    print(f'Training terminated')
     
-    #recon_eval_imgs = evaluate(config, eval_set, model)
+    recon_eval_imgs_list = test(config, test_set, model)
     
 
     

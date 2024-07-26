@@ -132,7 +132,7 @@ def split_database(img_list, splits=None):
         
         Output:
             -train_list: list of volumes for training.
-            -eval_list: list of volumes for evaluation.
+            -eval_list: list of volumes for evaluation. (unused)
             -test_list: list of volumes for test.
     
     """

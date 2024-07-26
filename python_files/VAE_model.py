@@ -219,7 +219,7 @@ class VAE(nn.Module):
         return x_recon, z, z_mean, z_logvar
     
     
-    def loss(self, x_target, x_recon, z_mean, z_logvar, beta, batch_size):
+    def loss(self, x_target, x_recon, z_mean, z_logvar, beta, batch_size: int=1):
         
         div_loss = beta*self.encoder.divergence_loss(z_mean, z_logvar, batch_size)
         recon_loss = self.decoder.loss_recon(x_target, x_recon)
