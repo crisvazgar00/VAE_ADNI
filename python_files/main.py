@@ -62,9 +62,9 @@ def epoch_train(model, train_set, optimizer, config):
         Output:
             - Loss of an epoch.
     
-    """
+    """ 
     
-    #print(f'Hola, soy el comienzo de epoch train y funciono!')
+    model.train()
     
     beta = config['model']['loss']['beta']
     batch_size = config['model']['batch_size']
@@ -90,7 +90,6 @@ def epoch_train(model, train_set, optimizer, config):
         
     #Average over total number of batches
     loss_epoch /= batch_count
-    print(f'loss epoch: {loss_epoch}')
     
     #print('Hola, soy el final de epoch_train y funciono!')
     
@@ -101,9 +100,8 @@ def epoch_train(model, train_set, optimizer, config):
 
 
 
-def train(config, model, train_set, epochs):
+def train(config, model, train_set, eval_set, epochs):
     
-    model.train()
     device_name = config['experiment']['device']
     device = torch.device(device_name if torch.cuda.is_available() else 'cpu')
     
@@ -118,14 +116,50 @@ def train(config, model, train_set, epochs):
 
     loss_train = 0.0
     for epoch in range(epochs):
+        #Train the model for this epoch
         print(f'epoch nº: {epoch}')
         loss_epoch = epoch_train(model, train_set, optimizer, config)
         loss_train += loss_epoch
+        
+        #Perform validation of the model
+        loss_eval = evaluation(model, eval_set, device, config)
+        
+        print(f'Epoch loss: {loss_epoch}, validation loss: {loss_eval}')
+        
         
     loss_train /= epochs
 
     return model
 
+
+def evaluation(model, eval_set, device, config):
+    model.eval()
+    
+    beta = config['model']['loss']['beta']
+    
+    eval_loss = 0.0
+    
+    with torch.no_grad():
+        for x in eval_set:
+            x_tensor = torch.tensor(x, dtype=torch.float32).to(device)
+            
+            recon_eval, _, z_mean, z_logvar = model(x_tensor)
+            
+            if len(x_tensor.shape) == 3:
+                #Add dimension for [Batch_size] to fit expected dimensions in DSSIM
+                x_tensor = x_tensor.unsqueeze(0)
+                
+            if len(recon_eval.shape) == 5:
+                #Remove extra dimension [Channel] from shape
+                recon_eval = recon_eval.squeeze(1)
+            
+            _, _, loss_eval = model.loss(x_tensor, recon_eval, z_mean, z_logvar, beta, batch_size = 1)
+            
+            eval_loss += loss_eval
+        
+        eval_loss /= len(eval_set)
+        
+        return eval_loss
 
 
 
@@ -199,6 +233,8 @@ if __name__ == '__main__':
     prefix = config['loader']['load_folder']['prefix']
     extension = config['loader']['load_folder']['extension']
     target_folder_name = config['loader']['load_folder']['target_folder_name']
+    
+    epochs = config['model']['epochs']    
 
     #Load images and normalise them
     imgs_paths = find_pet(folder, prefix, extension, target_folder_name)
@@ -209,12 +245,13 @@ if __name__ == '__main__':
     splits = config['loader']['splits']
     train_set, eval_set, test_set = split_database(imgs_list_norm, splits)
     print(f'Length of train_set: {len(train_set)}, eval_set: {len(eval_set)}, test_set: {len(test_set)}')
-
-    epochs = config['model']['epochs']
+    
+    #Load model and perform training
     model = model_VAE(config)
-    model = train(config, model, train_set, epochs)  
+    model = train(config, model, train_set, eval_set, epochs)  
     print(f'Training terminated')
     
+    #Perform testing
     recon_eval_imgs_list = test(config, test_set, model)
     
 

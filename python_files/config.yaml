@@ -4,7 +4,7 @@ model:
   latent: 5
   loss:
     beta: 1.0
-  epochs: 10
+  epochs: 5
   lr: 0.0001
   optimizer: adam
   batch_size: 96
@@ -16,7 +16,7 @@ loader:
     extension: .nii
     target_folder_name: pet
   splits:
-  - 0.7
-  - 0.15
-  - 0.15
+  - 0.8
+  - 0.10
+  - 0.10
 
