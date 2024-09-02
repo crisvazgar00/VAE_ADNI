@@ -4,7 +4,6 @@ import glob
 import nibabel as nib
 import random
 import matplotlib.pyplot as plt
-import ipyvolume as ipv
 from mpl_toolkits.mplot3d import Axes3D
 import numpy as np
 

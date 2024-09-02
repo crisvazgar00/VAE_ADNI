@@ -7,6 +7,7 @@ import yaml
 import nibabel as nib
 import matplotlib.pyplot as plt
 import torch
+from torch.utils.tensorboard import SummaryWriter
 
 
 
@@ -91,8 +92,6 @@ def epoch_train(model, train_set, optimizer, config):
     #Average over total number of batches
     loss_epoch /= batch_count
     
-    #print('Hola, soy el final de epoch_train y funciono!')
-    
     return loss_epoch
 
 
@@ -101,6 +100,8 @@ def epoch_train(model, train_set, optimizer, config):
 
 
 def train(config, model, train_set, eval_set, epochs):
+    
+    writer = SummaryWriter() #Keep track of data through tensorboard
     
     device_name = config['experiment']['device']
     device = torch.device(device_name if torch.cuda.is_available() else 'cpu')
@@ -124,8 +125,14 @@ def train(config, model, train_set, eval_set, epochs):
         #Perform validation of the model
         loss_eval = evaluation(model, eval_set, device, config)
         
-        print(f'Epoch loss: {loss_epoch}, validation loss: {loss_eval}')
+        #Keep track through tensorboard
+        writer.add_scalar('Loss/train', loss_epoch, epoch)
+        writer.add_scalar('Loss/evaluation', loss_eval, epoch)
+        writer.add_scalar('Loss/train-evaluation', loss_epoch, epoch)
+        writer.add_scalar('Loss/train-evaluation', loss_eval, epoch)
         
+        print(f'Epoch loss: {loss_epoch}, validation loss: {loss_eval}')
+    writer.close()
         
     loss_train /= epochs
 
@@ -207,7 +214,7 @@ def test(config, test_set, model):
             
             #compute loss between reconstructed image and input image
             _, _, loss_img = model.loss(input_tensor, recon_img, z_mean, z_logvar, beta, batch_size = 1)
-            print(f'Loss of testing number {count}: {loss_img}')
+            #print(f'Loss of testing number {count}: {loss_img}')
             
             #Add to list
             recon_test_imgs_list.append(recon_img)
