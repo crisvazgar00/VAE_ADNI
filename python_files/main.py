@@ -32,6 +32,8 @@ def generate_batches(data, config):
     batch_size = config['model']['batch_size']
     device = config['experiment']['device']
     n_batches = len(data) // batch_size
+    #len(data) // batch_size is not a whole number. That's why bellow we introduce 
+    #min((batch_idx + 1) * batch_size, len(data))
     
     for batch_idx in range(n_batches):
         # 0*4 = 0, 1*4 = 4, 4*2 = 8, ... (if batch_size = 4)
@@ -69,6 +71,7 @@ def epoch_train(model, train_set, optimizer, config):
     
     beta = config['model']['loss']['beta']
     batch_size = config['model']['batch_size']
+    div_criteria = config['model']['divergence']
     loss_epoch = 0.0
     batch_count = 0
     
@@ -76,13 +79,12 @@ def epoch_train(model, train_set, optimizer, config):
         
         optimizer.zero_grad()
         #Obtain reconstructed images and latent space of the batch
-        #print(f'Hola, estoy justo entre optimizer.zero_grad y model(batch)')
         x_recon_batch, z, z_mean, z_logvar = model(batch)
-        #print(f'Hola, estoy justo DESPUES de model(batch)')
+        
         if len(x_recon_batch.shape) == 5:
             x_recon_batch = x_recon_batch.squeeze(1)
         #Compute the loss of the batch
-        _, _, loss_batch = model.loss(batch, x_recon_batch, z_mean, z_logvar, beta, batch_size)
+        _, _, loss_batch = model.loss(device, div_criteria, batch, x_recon_batch, z_mean, z_logvar, beta, batch_size)
         
         loss_batch.backward()
         optimizer.step()
@@ -128,8 +130,8 @@ def train(config, model, train_set, eval_set, epochs):
         #Keep track through tensorboard
         writer.add_scalar('Loss/train', loss_epoch, epoch)
         writer.add_scalar('Loss/evaluation', loss_eval, epoch)
-        writer.add_scalar('Loss/train-evaluation', loss_epoch, epoch)
-        writer.add_scalar('Loss/train-evaluation', loss_eval, epoch)
+        writer.add_scalars('Loss/train-evaluation', {'loss train' : loss_epoch, 'loss evaluation' : loss_eval} , epoch)
+
         
         print(f'Epoch loss: {loss_epoch}, validation loss: {loss_eval}')
     writer.close()
@@ -143,6 +145,7 @@ def evaluation(model, eval_set, device, config):
     model.eval()
     
     beta = config['model']['loss']['beta']
+    div_criteria = config['model']['divergence']
     
     eval_loss = 0.0
     
@@ -160,13 +163,14 @@ def evaluation(model, eval_set, device, config):
                 #Remove extra dimension [Channel] from shape
                 recon_eval = recon_eval.squeeze(1)
             
-            _, _, loss_eval = model.loss(x_tensor, recon_eval, z_mean, z_logvar, beta, batch_size = 1)
+            _, _, loss_eval = model.loss(device, div_criteria, x_tensor, recon_eval, z_mean, z_logvar, beta, batch_size = 1)
             
             eval_loss += loss_eval
         
         eval_loss /= len(eval_set)
         
         return eval_loss
+
 
 
 
@@ -185,6 +189,7 @@ def test(config, test_set, model):
         
         #Load hyperparameters and device
         beta = config['model']['loss']['beta']
+        div_criteria = config['model']['divergence']
         device_name = config['experiment']['device']
         device = torch.device(device_name if torch.cuda.is_available() else 'cpu')
     
@@ -213,7 +218,7 @@ def test(config, test_set, model):
                 recon_img = recon_img.squeeze(1)    
             
             #compute loss between reconstructed image and input image
-            _, _, loss_img = model.loss(input_tensor, recon_img, z_mean, z_logvar, beta, batch_size = 1)
+            _, _, loss_img = model.loss(device, div_criteria, input_tensor, recon_img, z_mean, z_logvar, beta, batch_size = 1)
             #print(f'Loss of testing number {count}: {loss_img}')
             
             #Add to list
@@ -221,6 +226,8 @@ def test(config, test_set, model):
             
             loss_test += loss_img
             count += 1
+            if count == len(test_set):
+                tensor_to_nii(input_tensor, recon_img)
             
         loss_test /= count   
         print(f'Total loss of testing: {loss_test}') 
@@ -228,6 +235,18 @@ def test(config, test_set, model):
     return recon_test_imgs_list
 
 
+
+def tensor_to_nii(x_input, x_recon):
+    x_recon = x_recon.squeeze(0)
+    x_numpy = x_recon.cpu().detach().numpy()
+    x_nifti_recon = nib.Nifti1Image(x_numpy, affine = np.eye(4))
+    
+    x_input = x_input.squeeze(0)
+    x_input = x_input.cpu().detach().numpy()
+    x_nifti_input = nib.Nifti1Image(x_input, affine = np.eye(4))
+    nib.save(x_nifti_recon, 'reconstructed_test_volume.nii')
+    nib.save(x_nifti_input, 'normalised_test_volume.nii')
+    return 
 
 
 if __name__ == '__main__':
@@ -242,11 +261,11 @@ if __name__ == '__main__':
     target_folder_name = config['loader']['load_folder']['target_folder_name']
     
     epochs = config['model']['epochs']    
-
+    device = config['experiment']['device']
     #Load images and normalise them
     imgs_paths = find_pet(folder, prefix, extension, target_folder_name)
     imgs_list = load_img_nii(imgs_paths)
-    imgs_list_norm = normalization_cerebellum(imgs_list)
+    imgs_list_norm = normalization_cerebellum(config, imgs_list)
 
     #Split dataset intro three sets
     splits = config['loader']['splits']

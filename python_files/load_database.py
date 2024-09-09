@@ -6,6 +6,7 @@ import random
 import matplotlib.pyplot as plt
 from mpl_toolkits.mplot3d import Axes3D
 import numpy as np
+import yaml
 
 """
     Script for finding _pet.nii files inside a main_folder. 
@@ -69,7 +70,7 @@ def load_img_nii(file_list):
 
 
 
-def normalization_cerebellum(img_list):
+def normalization_cerebellum(config, img_list):
     """
     Function for loading a template from AAL3 (ROI_MNI_V7.nii).
     It extracts the cerebellum region and load it into an array.
@@ -90,7 +91,12 @@ def normalization_cerebellum(img_list):
             according to cerebellum average 
     
     """
-    path = "C:/Program Files/spm12/toolbox/AAL3/ROI_MNI_V7.nii"
+    config_file = 'config.yaml'
+
+    with open(config_file, 'r') as file:
+        config = yaml.safe_load(file)
+    
+    path = config['loader']['load_temp']
     temp_file = nib.load(path)
     temp = np.zeros((90,110,90))
     temp[:,:-1,:] = temp_file.get_fdata()[1:,:,1:]

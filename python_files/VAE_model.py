@@ -133,7 +133,7 @@ class VAE_encoder(nn.Module):
         return z, z_mean, z_logvar
     
     
-    def divergence_loss(self, z_mean, z_logvar, batch_size):
+    def divergence_loss_KL(self, z_mean, z_logvar, batch_size):
         """
         Function for computing the KL divergence between
         two gaussians distributions. We assume priori distribution
@@ -153,9 +153,42 @@ class VAE_encoder(nn.Module):
         return KL_div_loss
     
     
+    def compute_kernel(self, x, y):
+        """Function to compute gaussian kernel for MMD"""
+        
+        x_size = x.shape[0]
+        y_size = y.shape[0]
+        dim = x.shape[1]
+        
+        tiled_x = x.view(x_size, 1, dim).repeat(1, y_size, 1)
+        tiled_y = y.view(1, y_size, dim).repeat(x_size, 1, 1)
+        
+        return torch.exp(-torch.mean((tiled_x - tiled_y)**2, dim = 2) / dim*1.0)
     
+    def compute_MMD(self, x:Tensor, y:Tensor):
+        """
+        Function for computing the MMD divergence between tensors x and y.
+        """
+        x_kernel = self.compute_kernel(x, x)
+        y_kernel = self.compute_kernel(y, y)
+        xy_kernel = self.compute_kernel(x, y)
+        
+        return torch.mean(x_kernel) + torch.mean(y_kernel) - 2*torch.mean(xy_kernel)
     
-    
+    def divergence_loss_MMD(self, mu:Tensor, logvar: Tensor, device):
+        """
+        Function for computing MMD between sampled latent distribution and normal
+        distribution.
+        """
+        
+        true_samples = torch.randn(len(mu), self.latent).to(device)
+        
+        return self.compute_MMD(true_samples, mu)
+
+
+
+
+
 class VAE_decoder(nn.Module): 
     """
     Class for 3D VAE Decoder
@@ -198,11 +231,36 @@ class VAE_decoder(nn.Module):
         
         recon_loss = DSSIM_3D(x_target, x_recon)
         return recon_loss
+
+
+
+
+
+
+"""
+class LonVAE(nn.Module):
+    Class for 3D Longitudinal VAE
     
+    def __init__():
+        super.__init__()
+        self.log_acceleration = 
+        
     
+    def longitudinal_loss(self, data, z, recon_data):
     
-    
-    
+        alig_loss = 0.0
+        #Data is a dic with: volume (Data[0]), id (Data[1]) and age (Data[2])
+        id, timepoint = data[1], data[2]
+
+"""
+
+
+
+
+
+
+
+
 class VAE(nn.Module):
     
     def __init__(self, encoder, decoder):
@@ -219,9 +277,12 @@ class VAE(nn.Module):
         return x_recon, z, z_mean, z_logvar
     
     
-    def loss(self, x_target, x_recon, z_mean, z_logvar, beta, batch_size: int=1):
+    def loss(self, device, div_criteria, x_target, x_recon, z_mean, z_logvar, beta, batch_size: int=1):
         
-        div_loss = beta*self.encoder.divergence_loss(z_mean, z_logvar, batch_size)
+        if div_criteria == 'KL':
+            div_loss = beta*self.encoder.divergence_loss_KL(z_mean, z_logvar, batch_size)
+        elif div_criteria == 'MMD':
+            div_loss = beta*self.encoder.divergence_loss_MMD(z_mean, z_logvar, device)
         recon_loss = self.decoder.loss_recon(x_target, x_recon)
         total_loss = recon_loss - beta*div_loss
         

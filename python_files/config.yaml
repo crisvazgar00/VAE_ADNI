@@ -4,19 +4,21 @@ model:
   latent: 5
   loss:
     beta: 1.0
-  epochs: 5
+  epochs: 10
   lr: 0.0001
   optimizer: adam
+  divergence: KL
   batch_size: 96
 
 loader:
+  load_temp: C:/Program Files/spm12/toolbox/AAL3/ROI_MNI_V7.nii
   load_folder:
     folder: C:/Users/Cristobal/Desktop/ADNI_BIDS
     prefix: r
     extension: .nii
     target_folder_name: pet
   splits:
-  - 0.8
+  - 0.80
   - 0.10
   - 0.10
 
