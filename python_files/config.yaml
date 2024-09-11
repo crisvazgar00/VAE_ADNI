@@ -11,6 +11,7 @@ model:
   batch_size: 96
 
 loader:
+  load_ADNIMERGE: C:/Users/Cristobal/Desktop/VAE_test/python_files/ADNIMERGE.csv
   load_temp: C:/Program Files/spm12/toolbox/AAL3/ROI_MNI_V7.nii
   load_folder:
     folder: C:/Users/Cristobal/Desktop/ADNI_BIDS

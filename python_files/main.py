@@ -1,4 +1,4 @@
-from load_database import find_pet, load_img_nii, normalization_cerebellum, split_database
+from load_database import find_pet, load_img_nii, normalization_cerebellum, split_database, transform_string, extract_id_ses_from_path, merge_id_ses_to_ADNIMERGE
 from VAE_model import VAE, VAE_encoder, VAE_decoder
 import os
 import sys
@@ -8,6 +8,7 @@ import nibabel as nib
 import matplotlib.pyplot as plt
 import torch
 from torch.utils.tensorboard import SummaryWriter
+import pandas as pd
 
 
 
@@ -226,7 +227,8 @@ def test(config, test_set, model):
             
             loss_test += loss_img
             count += 1
-            if count == len(test_set):
+            
+            if count == len(test_set):  #Convert last volume into .nii to check model
                 tensor_to_nii(input_tensor, recon_img)
             
         loss_test /= count   
@@ -237,7 +239,12 @@ def test(config, test_set, model):
 
 
 def tensor_to_nii(x_input, x_recon):
-    x_recon = x_recon.squeeze(0)
+    """
+    This function transforms an input volume tensor 'x_input' into a .nii
+    volume 'x_recon'
+    """
+    
+    x_recon = x_recon.squeeze(0) #Erase channel dimension
     x_numpy = x_recon.cpu().detach().numpy()
     x_nifti_recon = nib.Nifti1Image(x_numpy, affine = np.eye(4))
     
@@ -249,8 +256,41 @@ def tensor_to_nii(x_input, x_recon):
     return 
 
 
+
+
+
+
+def sample_latent_space(z_list):
+    """
+    Function for plotting latent_dim x against latent_dim for test_set.
+    Each point in the scatterplot is colorcoded by its ADAS score.
+    """
+    
+    dim_0 = [lat[0] for lat in z_list]
+    dim_1 = [lat[1] for lat in z_list]
+    
+    plt.scatter(dim_0, dim_1)
+    plt.xlabel('Latent dim 0')
+    plt.ylabel('Latent dim 1')
+    plt.title ('Latent dim 0 vs latent dim 1')
+    plt.grid(True)
+    plt.show()
+
+
+
+
+
+
+
+
+
+
+
+
 if __name__ == '__main__':
     config_file = 'config.yaml'
+    
+    #LOAD HYPERPARAMETERS FROM CONFIG FILE
 
     with open(config_file, 'r') as file:
         config = yaml.safe_load(file)
@@ -262,22 +302,32 @@ if __name__ == '__main__':
     
     epochs = config['model']['epochs']    
     device = config['experiment']['device']
-    #Load images and normalise them
+    
+    
+    #LOAD IMAGES AND APPLY NORMALIZATION
     imgs_paths = find_pet(folder, prefix, extension, target_folder_name)
     imgs_list = load_img_nii(imgs_paths)
     imgs_list_norm = normalization_cerebellum(config, imgs_list)
 
-    #Split dataset intro three sets
+    #SPLIT DATASET INTO TRAINING, VALIDATION AND TEST
     splits = config['loader']['splits']
     train_set, eval_set, test_set = split_database(imgs_list_norm, splits)
     print(f'Length of train_set: {len(train_set)}, eval_set: {len(eval_set)}, test_set: {len(test_set)}')
     
-    #Load model and perform training
+    #LOAD ADNIMERGE DATASET AND FILTER WITH AVAILABLE SUBJECTS
+    path_ADNIMERGE = config['loader']['load_ADNIMERGE']   
+    ADNIMERGE_df = pd.read_csv(path_ADNIMERGE)
+    available_tuple_id_ses = extract_id_ses_from_path(imgs_paths)
+    transformed_available_tuple_id_ses = transform_string(available_tuple_id_ses)
+    #MERGE TRANSFORMED TUPLE LIST OF AVAILABLE SUBJECTS AND ADNIMERGE
+    df_ADNI_BIDS_ID_SES_ADAS = merge_id_ses_to_ADNIMERGE(transformed_available_tuple_id_ses, ADNIMERGE_df)
+    
+    #LOAD MODEL AND TRAIN
     model = model_VAE(config)
     model = train(config, model, train_set, eval_set, epochs)  
     print(f'Training terminated')
     
-    #Perform testing
+    #PERFORM TESTING
     recon_eval_imgs_list = test(config, test_set, model)
     
 
