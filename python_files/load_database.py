@@ -28,6 +28,12 @@ import pandas as pd
 
 """
 
+#_________________________________________________
+
+#FIND PATHS, LOAD FILES AND PREPROCESS IMAGES
+#_________________________________________________
+
+
 def find_pet(folder, prefix, extension, target_folder_name):
     file_list = []
     
@@ -54,6 +60,7 @@ def find_pet(folder, prefix, extension, target_folder_name):
     
     return file_list
 
+
 def load_img_nii(file_list):
     #img_dic = {}
     img_list = []
@@ -67,8 +74,6 @@ def load_img_nii(file_list):
         #img_dic[file_path] = (img, dim)
         img_list.append(img)
     return  img_list
-
-
 
 
 
@@ -127,7 +132,10 @@ def normalization_cerebellum(config, img_list):
     
     return img_list_norm
 
+#________________________________________________
 
+#SPLIT DATABASE INTO TRAIN, EVAL AND TEST SETS
+#________________________________________________
 
 
 def split_database(img_list, splits=None):
@@ -143,6 +151,9 @@ def split_database(img_list, splits=None):
             -eval_list: list of volumes for evaluation. (unused)
             -test_list: list of volumes for test.
     
+    The way of splitting is shuffling the entire dataset and then asign n_train first
+    subjects to train_set, then the next n_eval subjects to train_eval and then the
+    last n_test subjects to test_set.
     """
     
     if splits is None:
@@ -159,7 +170,7 @@ def split_database(img_list, splits=None):
     #This way we don't lose any image due to approximation of round()
     n_test = N - n_train - n_eval
     
-    if n_train + n_eval + n_test != N:
+    if n_train + n_eval + n_test != N: #Check that there is no subjects left
         raise ValueError("Error in splitting dataset: sum of splits does not match dataset size")
     
     train_list = shuffled_list[0 : n_train] 
@@ -237,7 +248,30 @@ def merge_id_ses_to_ADNIMERGE(transformed_id_ses_list, ADNIMERGE_df):
     #Merge list of tuples and full dataset
     df_ADNI_BIDS = pd.merge(df, df_id_ses, on = ['PTID', 'VISCODE'])
     #Drop all columns except ID, Session and ADAS11
-    df_ADNI_BIDS_id_ses_ADAS = df_ADNI_BIDS[['PTID', 'VISCODE', 'ADAS11']]
+    df_ADNI_BIDS_id_ses_ADAS = df_ADNI_BIDS[['PTID', 'VISCODE', 'ADAS13']]
     return df_ADNI_BIDS_id_ses_ADAS
+
+
+#____________________________________________________________________
+
+#FUNCTIONS FOR MERGING AND SPLITTING LISTS TO MATCH ID WITH PATIENT
+#____________________________________________________________________
+
+
+
+def merge_lists(imgs_list, id_ses_list_formated):
+    """
+    This function merges two lists into one
+    """
+    imgs_IDSES_tuple = list(zip(imgs_list, id_ses_list_formated))
+    return imgs_IDSES_tuple
+
+def split_list(merge_list):
+    """
+    This function splits a list into two lists
+    """
+    list_1 = [tuple[0] for tuple in merge_list]
+    list_2 = [tuple[1] for tuple in merge_list]
+    return  list_1, list_2
 
 

@@ -1,4 +1,5 @@
 from load_database import find_pet, load_img_nii, normalization_cerebellum, split_database, transform_string, extract_id_ses_from_path, merge_id_ses_to_ADNIMERGE
+from load_database import merge_lists, split_list
 from VAE_model import VAE, VAE_encoder, VAE_decoder
 import os
 import sys
@@ -186,6 +187,7 @@ def test(config, test_set, model):
     """
     model.eval()
     recon_test_imgs_list = []
+    z_test_list = []
     with torch.no_grad():
         
         #Load hyperparameters and device
@@ -212,8 +214,10 @@ def test(config, test_set, model):
             if len(input_tensor.shape) == 3:
                 input_tensor = input_tensor.unsqueeze(0)
             #Encode and decode img
-            recon_img, z, z_mean, z_logvar = model(input_tensor)    
+            recon_img, z, z_mean, z_logvar = model(input_tensor)  
             
+            #ADD Z TO Z_TEST_LIST TO PLOT LATER
+            z_test_list.append(z)
             if len(recon_img.shape) == 5:
                 #Remove extra dimension [Channel] from shape
                 recon_img = recon_img.squeeze(1)    
@@ -230,11 +234,12 @@ def test(config, test_set, model):
             
             if count == len(test_set):  #Convert last volume into .nii to check model
                 tensor_to_nii(input_tensor, recon_img)
+                reconstruction_diff(input_tensor, recon_img)
             
         loss_test /= count   
         print(f'Total loss of testing: {loss_test}') 
             
-    return recon_test_imgs_list
+    return recon_test_imgs_list, z_test_list
 
 
 
@@ -257,32 +262,151 @@ def tensor_to_nii(x_input, x_recon):
 
 
 
-
-
-
-def sample_latent_space(z_list):
+def plot_latent_space_ADAS(z_list, id_ses_list, df_ADNIMERGE, path_test, config):
     """
     Function for plotting latent_dim x against latent_dim for test_set.
     Each point in the scatterplot is colorcoded by its ADAS score.
+        Args:
+        
+            -z_list: List of dimensions (length(test_set), lat_space). Contains
+            the latent space of every test_set subject (or whatever we feed the function)
+            
+            -test_id_ses: List of tuples (ID, SES, ADAS) of each test_set subject. The order
+            of z_list matches the order of test_id_ses (they are sorted together)
+            
+            -df_ADNIMERGE: ADNIMERGE dataframe containing the information of every subject of
+            the study (More subjects than our database).
+            
+            -config: configuration file with hyprparameters. Used to obtain latent_dim.
     """
+    sub_folder = "scatter_images"
+    if not os.path.exists(sub_folder):
+        os.makedirs(sub_folder)
     
-    dim_0 = [lat[0] for lat in z_list]
-    dim_1 = [lat[1] for lat in z_list]
     
-    plt.scatter(dim_0, dim_1)
-    plt.xlabel('Latent dim 0')
-    plt.ylabel('Latent dim 1')
-    plt.title ('Latent dim 0 vs latent dim 1')
-    plt.grid(True)
-    plt.show()
+    latent_dim = config['model']['latent']
+    latents_plot = np.arange(latent_dim)
+    #MERGE ADNIMERGE DATASET WITH TEST_ID_SES AND GET DF (ID, SES, ADAS13)
+    df_ID_SES_ADAS = merge_id_ses_to_ADNIMERGE(id_ses_list, df_ADNIMERGE)
+    
+    #SORT ADNIMERGE INTO SAME ORDER AS MY SUBJECT DATASET
+    df_order = pd.DataFrame(id_ses_list, columns = ['PTID', 'VISCODE'])
+    df_order.set_index(['PTID', 'VISCODE'], inplace=True)
+    
+    df_ID_SES_ADAS = df_ID_SES_ADAS.set_index(['PTID', 'VISCODE'])
+    df_ADAS = df_ID_SES_ADAS.loc[df_order.index]
+    #GET THE INDEX LIST TO PRINT INTO FILE
+    index_ADAS = df_ADAS.index
+
+    ADAS_list = df_ADAS['ADAS13'].tolist()
+    
+    
+    
+    #FOR DEBUGGING PURPOSES. SAVE INTO FILE PATH_ID AND ADNIMERGE_ID
+    debugging = config['experiment']['debugging']
+    
+    if debugging == True:
+        
+        with open('IDX_order_ADNI_BIDS.txt', 'w') as file:
+            for item in id_ses_list:
+                file.write(f'{item}\n')
+        
+        with open('IDX_order_ADNI_BIDS.txt', 'w') as file:
+            for item in z_list:
+                file.write(f'{item}\n')
+        
+        
+        path_test = extract_id_ses_from_path(path_test)
+        test_path_ID_SES = merge_lists(path_test, id_ses_list)
+        test_ADNIMERGE_path_ID_SES = merge_lists(test_path_ID_SES, index_ADAS)
+        columns = ["test_path_ADNI_BIDS", "test_ADNIBIDS_ID_SES", "test_ADNIMERGE_ID_SES"]
+        with open('paths_ID_SES.txt', 'w') as file:
+            file.write('\t'.join(columns) + '\n')
+            for item in test_ADNIMERGE_path_ID_SES:
+                file.write(f'{item}\n')
+        
+
+    for latx in latents_plot:
+        for laty in latents_plot:
+            if latx != laty:
+                dim_x = [tensor.cpu().numpy()[0][latx] for tensor in z_list] #GET DIM X OF LATENT SPACE
+                dim_y = [tensor.cpu().numpy()[0][laty] for tensor in z_list] #GET DIM Y OF LATENT SPACE
+                
+                plt.figure(figsize = (8, 6))
+                plt.scatter(dim_x, dim_y, c = ADAS_list, cmap='viridis', edgecolors='k')
+
+                plt.xlabel(f'Latent dim {latx}')
+                plt.ylabel(f'Latent dim {laty}')
+                plt.title (f'Latent dim {latx} vs {laty}')
+
+                plt.colorbar(label='ADAS13')
+                plt.savefig(f'{sub_folder}/scatter_plot_dim{latent_dim}_lat{latx}_lat{laty}.png', format='png', dpi=300, bbox_inches='tight')
+                plt.close()
+    return None
+
+def reconstruction_diff(x, y):
+    """
+    This function measures the reconstruction difference between two volumes.
+    Difference is performed by direct substraction of pixels.
+    """
+    x = x.squeeze(0) #Erase channel dimension (We need 3dims)
+    y = y.squeeze(0) #Erase channel dimension (We need 3dims)
+    recon_img = x - y
+    recon_img_np = recon_img.detach().cpu().numpy()
+    nii_recon_diff = nib.Nifti1Image(recon_img_np, affine = np.eye(4))
+    nib.save(nii_recon_diff, 'ImageDiff.nii')
+    return recon_img
 
 
+def plot_latentx_vs_ADAS(z_list, id_ses_list, df_ADNIMERGE, path_test, config):
+    """
+    Function for plotting latent_dim x against latent_dim for test_set.
+    Each point in the scatterplot is colorcoded by its ADAS score.
+        Args:
+        
+            -z_list: List of dimensions (length(test_set), lat_space). Contains
+            the latent space of every test_set subject (or whatever we feed the function)
+            
+            -test_id_ses: List of tuples (ID, SES, ADAS) of each test_set subject. The order
+            of z_list matches the order of test_id_ses (they are sorted together)
+            
+            -df_ADNIMERGE: ADNIMERGE dataframe containing the information of every subject of
+            the study (More subjects than our database).
+            
+            -config: configuration file with hyprparameters. Used to obtain latent_dim.
+    """
+    sub_folder = "scatter_images_latx_VS_ADAS"
+    if not os.path.exists(sub_folder):
+        os.makedirs(sub_folder)
+    
+    latent_dim = config['model']['latent']
+    latents_plot = np.arange(latent_dim)
+    #MERGE ADNIMERGE DATASET WITH TEST_ID_SES AND GET DF (ID, SES, ADAS13)
+    df_ID_SES_ADAS = merge_id_ses_to_ADNIMERGE(id_ses_list, df_ADNIMERGE)
+    
+    #SORT ADNIMERGE INTO SAME ORDER AS MY SUBJECT DATASET
+    df_order = pd.DataFrame(id_ses_list, columns = ['PTID', 'VISCODE'])
+    df_order.set_index(['PTID', 'VISCODE'], inplace=True)
+    
+    df_ID_SES_ADAS = df_ID_SES_ADAS.set_index(['PTID', 'VISCODE'])
+    df_ADAS = df_ID_SES_ADAS.loc[df_order.index]
 
 
+    ADAS_list = df_ADAS['ADAS13'].tolist() #THIS IS THE SORTED LIST OF ADAS TO USE
+    
+    
+    for latx in latents_plot:
+            dim_x = [tensor.cpu().numpy()[0][latx] for tensor in z_list] #GET DIM X OF LATENT SPACE
+                
+            plt.figure(figsize = (8, 6))
+            plt.scatter(dim_x, ADAS_list)
 
+            plt.xlabel(f'Latent dim {latx}')
+            plt.ylabel(f'ADAS13')
 
-
-
+            plt.savefig(f'{sub_folder}/scatter_plot_dim{latent_dim}_lat{latx}.png', format='png', dpi=300, bbox_inches='tight')
+            plt.close()
+    return None
 
 
 
@@ -302,25 +426,44 @@ if __name__ == '__main__':
     
     epochs = config['model']['epochs']    
     device = config['experiment']['device']
+    splits = config['loader']['splits']
+    path_ADNIMERGE = config['loader']['load_ADNIMERGE']
     
     
     #LOAD IMAGES AND APPLY NORMALIZATION
     imgs_paths = find_pet(folder, prefix, extension, target_folder_name)
     imgs_list = load_img_nii(imgs_paths)
     imgs_list_norm = normalization_cerebellum(config, imgs_list)
-
-    #SPLIT DATASET INTO TRAINING, VALIDATION AND TEST
-    splits = config['loader']['splits']
-    train_set, eval_set, test_set = split_database(imgs_list_norm, splits)
-    print(f'Length of train_set: {len(train_set)}, eval_set: {len(eval_set)}, test_set: {len(test_set)}')
     
-    #LOAD ADNIMERGE DATASET AND FILTER WITH AVAILABLE SUBJECTS
-    path_ADNIMERGE = config['loader']['load_ADNIMERGE']   
-    ADNIMERGE_df = pd.read_csv(path_ADNIMERGE)
-    available_tuple_id_ses = extract_id_ses_from_path(imgs_paths)
-    transformed_available_tuple_id_ses = transform_string(available_tuple_id_ses)
-    #MERGE TRANSFORMED TUPLE LIST OF AVAILABLE SUBJECTS AND ADNIMERGE
-    df_ADNI_BIDS_ID_SES_ADAS = merge_id_ses_to_ADNIMERGE(transformed_available_tuple_id_ses, ADNIMERGE_df)
+    #OBTAIN ID AND SESSION AND TRANSFORM INTO ADNIMERGE FORMAT
+    id_ses_list = extract_id_ses_from_path(imgs_paths)
+    id_ses_list_formated = transform_string(id_ses_list)
+    
+    #MERGE IMGS_LIST_NORM INTO (ID, SES) LIST 
+    imgs_IDSES_tuple = merge_lists(imgs_list_norm, id_ses_list_formated)
+    
+    #MERGE INTO A LIST OF FORMAT (PATH, (IMGS, (ID, SES)))
+    #TO KEEP TRACK OF IDs
+    paths_imgs_IDSES_tuple = merge_lists(imgs_paths, imgs_IDSES_tuple)
+    
+    #SPLIT DATABASE
+    train_set, eval_set, test_set = split_database(paths_imgs_IDSES_tuple, splits)
+    
+    
+    _, train_set = split_list(train_set) #SPLIT INTO (PATH) AND (IMG, (ID, SES))
+    train_set, _ = split_list(train_set) #SPLIT INTO (IMG) ((ID,SES))
+
+    _, eval_set = split_list(eval_set)
+    eval_set, _ = split_list(eval_set)
+
+    #WE ONLY NEED (ID, SES) FOR TEST SET AND PATHS FOR DEBUGGING
+    path_test, test_set = split_list(test_set)
+    test_set, test_id_ses = split_list(test_set) 
+
+    print(f'Length of train_set: {len(train_set)}, eval_set: {len(eval_set)}')
+    print(f'Length of test_set: {len(test_set)}. Length of (ID, SES) list: {len(test_id_ses)}')
+    
+    df_ADNIMERGE = pd.read_csv(path_ADNIMERGE)
     
     #LOAD MODEL AND TRAIN
     model = model_VAE(config)
@@ -328,7 +471,9 @@ if __name__ == '__main__':
     print(f'Training terminated')
     
     #PERFORM TESTING
-    recon_eval_imgs_list = test(config, test_set, model)
+    recon_eval_imgs_list, z_test_list = test(config, test_set, model)
     
+    plot_latent_space_ADAS(z_test_list, test_id_ses, df_ADNIMERGE, path_test, config)
+    plot_latentx_vs_ADAS(z_test_list, test_id_ses, df_ADNIMERGE, path_test, config)
 
     
