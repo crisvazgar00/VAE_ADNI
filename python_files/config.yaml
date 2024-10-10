@@ -5,7 +5,7 @@ model:
   latent: 5
   loss:
     beta: 1.0
-  epochs: 1
+  epochs: 2
   lr: 0.0001
   optimizer: adam
   divergence: KL

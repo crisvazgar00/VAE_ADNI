@@ -97,6 +97,10 @@ class VAE_encoder(nn.Module):
         self.lat_mean = nn.Linear(256, self.latent)
         self.lat_logvar = nn.Linear(256, self.latent)
         
+        #self.bn1 = nn.BatchNorm3d(32)
+        #self.bn2 = nn.BatchNorm3d(64)
+        #self.bn3 = nn.BatchNorm3d(128)
+        
         
     def reparameterize(self, z_mean, z_logvar):
         """
@@ -116,6 +120,7 @@ class VAE_encoder(nn.Module):
         
     def forward(self, x):
         
+        #print(f'Input size before conv3d: {x.size()}')
         
         if len(x.shape) == 3:
             x = x.unsqueeze(0)        
@@ -127,6 +132,7 @@ class VAE_encoder(nn.Module):
         x = F.relu(self.conv3(x))
         x = x.view(-1, 128 * 12 * 14 * 12 ) #flatten data to fit linear layer
         x = F.relu(self.fc(x))
+        
         z_mean = self.lat_mean(x)
         z_logvar = self.lat_logvar(x)
         z = self.reparameterize(z_mean, z_logvar)
@@ -148,8 +154,9 @@ class VAE_encoder(nn.Module):
         
         """
         
-        KL_div_loss = -0.5 * torch.sum(1 + z_logvar - z_mean.pow(2) - z_logvar.exp())
-        KL_div_loss /= batch_size
+        KL_div_loss = -0.5 * torch.sum(1 + z_logvar - z_mean.pow(2) - z_logvar.exp(), dim=1)
+        KL_div_loss = torch.mean(KL_div_loss)
+        
         return KL_div_loss
     
     
@@ -211,7 +218,7 @@ class VAE_decoder(nn.Module):
         x = F.relu(self.conv1Trans(x))
         x = F.relu(self.conv2Trans(x))
         #x = F.sigmoid(self.conv3Trans(x))
-        x = self.conv3Trans(x)
+        x = F.sigmoid(self.conv3Trans(x))
         return x
     
 
@@ -236,31 +243,6 @@ class VAE_decoder(nn.Module):
 
 
 
-
-"""
-class LonVAE(nn.Module):
-    Class for 3D Longitudinal VAE
-    
-    def __init__():
-        super.__init__()
-        self.log_acceleration = 
-        
-    
-    def longitudinal_loss(self, data, z, recon_data):
-    
-        alig_loss = 0.0
-        #Data is a dic with: volume (Data[0]), id (Data[1]) and age (Data[2])
-        id, timepoint = data[1], data[2]
-
-"""
-
-
-
-
-
-
-
-
 class VAE(nn.Module):
     
     def __init__(self, encoder, decoder):
@@ -280,13 +262,12 @@ class VAE(nn.Module):
     def loss(self, device, div_criteria, x_target, x_recon, z_mean, z_logvar, beta, batch_size: int=1):
         
         if div_criteria == 'KL':
-            div_loss = beta*self.encoder.divergence_loss_KL(z_mean, z_logvar, batch_size)
+            div_loss = self.encoder.divergence_loss_KL(z_mean, z_logvar, batch_size)
         elif div_criteria == 'MMD':
-            div_loss = beta*self.encoder.divergence_loss_MMD(z_mean, z_logvar, device)
+            div_loss = self.encoder.divergence_loss_MMD(z_mean, z_logvar, device)
+        
         recon_loss = self.decoder.loss_recon(x_target, x_recon)
-        total_loss = recon_loss - beta*div_loss
+        
+        total_loss = recon_loss + beta*div_loss
         
         return  total_loss, div_loss, recon_loss
-        
-
-    

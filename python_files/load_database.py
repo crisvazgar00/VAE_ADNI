@@ -9,7 +9,15 @@ import numpy as np
 import yaml
 import pandas as pd
 
-"""
+
+#_________________________________________________
+
+#FIND PATHS, LOAD FILES AND PREPROCESS IMAGES
+#_________________________________________________
+
+
+def find_pet(folder, prefix, extension, target_folder_name):
+    """
     Script for finding _pet.nii files inside a main_folder. 
 
     ARGUMENTS:
@@ -26,15 +34,7 @@ import pandas as pd
         This is optional if we set Extension to be '_pet.nii' (for PET) or
         '_T1w.nii' (for MRI).
 
-"""
-
-#_________________________________________________
-
-#FIND PATHS, LOAD FILES AND PREPROCESS IMAGES
-#_________________________________________________
-
-
-def find_pet(folder, prefix, extension, target_folder_name):
+    """
     file_list = []
     
     #Get current folder name
@@ -62,75 +62,16 @@ def find_pet(folder, prefix, extension, target_folder_name):
 
 
 def load_img_nii(file_list):
-    #img_dic = {}
     img_list = []
-    img = np.zeros((90, 110, 90))
     for file_path in file_list:
+        img = np.zeros((90, 110, 90))
         img_file = nib.load(file_path)
         img[:,:-1,:] = img_file.get_fdata()[1:, :, 1:]
         img[np.isnan(img)] = 0
-        #dim = img.shape
-        #print(dim)
-        #img_dic[file_path] = (img, dim)
         img_list.append(img)
-    return  img_list
+    return img_list
 
 
-
-def normalization_cerebellum(config, img_list):
-    """
-    Function for loading a template from AAL3 (ROI_MNI_V7.nii).
-    It extracts the cerebellum region and load it into an array.
-    
-    Normalization is performed by applying cerebellum template as
-    a mask to an image, performing intensity average of cerebellum region
-    and dividing volume by average.
-    
-    This is done because cerebellum is NOT affected by Alzheimer's disease.
-    
-    Volumes must be corregistered to single_subj_T1.nii MNI space as
-    indicated in the original AAL article.
-        Args:
-            -img_list: List of volumes (corregistered) to normalize
-            
-        Output:
-            -img_list_norm: List of volumes normalized in intensity
-            according to cerebellum average 
-    
-    """
-    config_file = 'config.yaml'
-
-    with open(config_file, 'r') as file:
-        config = yaml.safe_load(file)
-    
-    path = config['loader']['load_temp']
-    temp_file = nib.load(path)
-    temp = np.zeros((90,110,90))
-    temp[:,:-1,:] = temp_file.get_fdata()[1:,:,1:]
-    
-    #Set everything to 0 except for cerebellum labels (from 95 to 120)
-    temp_cerebellum = np.zeros_like(temp)
-    
-    temp_cerebellum[np.logical_and(temp >= 95, temp <= 120)] = temp[np.logical_and(temp >= 95, temp <= 120)]
-    #Transform to binary to obtain mask
-    mask = np.zeros_like(temp_cerebellum)
-    mask[temp_cerebellum != 0] = 1
-    
-    img_list_norm = []
-    for img in img_list:
-        #img_mask is a volume which ONLY contains the cerebellum of a patient
-        img_mask = np.multiply(mask, img)
-        img_mask[np.isnan(img_mask)] = 0
-        #Get nonzero values of img once mask is applied (to not include 0s in average)
-        nonzero_img_norm = img_mask[img_mask != 0] 
-        #Compute average of cerebellum, normalise and add to list. Nanmean to avoid NaN values
-        norm = np.nanmean(nonzero_img_norm)
-        #print(f'norm of iter {i} is: {norm}')
-        img_norm = img / norm
-        img_list_norm.append(img_norm)
-    
-    
-    return img_list_norm
 
 #________________________________________________
 
@@ -231,7 +172,7 @@ def extract_id_ses_from_path(imgs_paths):
 
 
 
-def merge_id_ses_to_ADNIMERGE(transformed_id_ses_list, ADNIMERGE_df):
+def merge_id_ses_to_ADNIMERGE(transformed_id_ses_list, ADNIMERGE_df, feature):
     """
     Args:
         -transformed_id_ses_list: list of tuples ('XXX_S_XXXX', 'mXX').
@@ -247,9 +188,15 @@ def merge_id_ses_to_ADNIMERGE(transformed_id_ses_list, ADNIMERGE_df):
     df_id_ses = pd.DataFrame(transformed_id_ses_list, columns = ['PTID', 'VISCODE'])
     #Merge list of tuples and full dataset
     df_ADNI_BIDS = pd.merge(df, df_id_ses, on = ['PTID', 'VISCODE'])
-    #Drop all columns except ID, Session and ADAS11
-    df_ADNI_BIDS_id_ses_ADAS = df_ADNI_BIDS[['PTID', 'VISCODE', 'ADAS13']]
-    return df_ADNI_BIDS_id_ses_ADAS
+    #Drop all columns except ID, Session and ADAS13 or Ventricles
+    #if feature == 'ADAS13':
+    #    df_ADNI_BIDS_id_ses_ADAS = df_ADNI_BIDS[['PTID', 'VISCODE', 'ADAS13']]
+    #    return df_ADNI_BIDS_id_ses_ADAS
+    #elif feature == 'Ventricles':
+    #    df_ADNI_BIDS_id_ses_VENTRICLES = df_ADNI_BIDS[['PTID', 'VISCODE', 'Ventricles']]
+    #    return df_ADNI_BIDS_id_ses_VENTRICLES
+    df_ADNI_BIDS_id_ses_feature = df_ADNI_BIDS[['PTID', 'VISCODE', f'{feature}']]
+    return df_ADNI_BIDS_id_ses_feature
 
 
 #____________________________________________________________________

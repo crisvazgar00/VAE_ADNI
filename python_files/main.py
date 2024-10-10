@@ -1,5 +1,9 @@
-from load_database import find_pet, load_img_nii, normalization_cerebellum, split_database, transform_string, extract_id_ses_from_path, merge_id_ses_to_ADNIMERGE
+from load_database import find_pet, load_img_nii, split_database, transform_string, extract_id_ses_from_path, merge_id_ses_to_ADNIMERGE
 from load_database import merge_lists, split_list
+from normalisation import normalization_min, normalization_cerebellum
+from debugging import make_grid_recon, tensor_to_nii, reconstruction_diff
+from plot_results import plot_latent_space_ADAS, SVR_ADAS, plot_latentx_vs_ADAS
+from plot_results import plot_latent_space_VENTRICLES, plot_latentx_vs_VENTRICLES, SVR_VENTRICLES
 from VAE_model import VAE, VAE_encoder, VAE_decoder
 import os
 import sys
@@ -10,6 +14,16 @@ import matplotlib.pyplot as plt
 import torch
 from torch.utils.tensorboard import SummaryWriter
 import pandas as pd
+from torchvision.io import decode_image
+from pathlib import Path
+import random
+from torchvision.utils import make_grid
+from sklearn.svm import LinearSVR
+from sklearn.model_selection import train_test_split
+from sklearn.metrics import mean_squared_error
+from colorama import Fore, Style, init
+
+
 
 
 
@@ -37,16 +51,22 @@ def generate_batches(data, config):
     #len(data) // batch_size is not a whole number. That's why bellow we introduce 
     #min((batch_idx + 1) * batch_size, len(data))
     
-    for batch_idx in range(n_batches):
+    for batch_idx in range(n_batches+1):
         # 0*4 = 0, 1*4 = 4, 4*2 = 8, ... (if batch_size = 4)
         start_idx = batch_idx * batch_size
         # 1*4 = 4, 2*4 = 8, ... (it is always batch_size steps ahead of start_idx)
         # We use min in the case end_idx is lower than len(data) in order not to exclude any data element
         end_idx = min((batch_idx + 1) * batch_size, len(data))
-        batch_data = torch.tensor(np.array(data[start_idx:end_idx], dtype=np.float32)).to(device)
+        batch_data = torch.from_numpy(np.array(data[start_idx:end_idx], dtype=np.float32)) \
+                 .requires_grad_(True) \
+                 .to(device)
         yield batch_data
 
 
+#_________________________________________________
+
+#               TRAINING
+#_________________________________________________
 
 
 
@@ -75,28 +95,43 @@ def epoch_train(model, train_set, optimizer, config):
     batch_size = config['model']['batch_size']
     div_criteria = config['model']['divergence']
     loss_epoch = 0.0
+    loss_epoch_div = 0.0
+    loss_epoch_recon = 0.0
     batch_count = 0
     
+    
+    
     for batch in generate_batches(train_set, config):
+        
+        #print(batch_count)
+        #print(f'len of batch: {len(batch)}')
         
         optimizer.zero_grad()
         #Obtain reconstructed images and latent space of the batch
         x_recon_batch, z, z_mean, z_logvar = model(batch)
         
-        if len(x_recon_batch.shape) == 5:
+        if len(x_recon_batch.shape) == 5: # ndim
             x_recon_batch = x_recon_batch.squeeze(1)
         #Compute the loss of the batch
-        _, _, loss_batch = model.loss(device, div_criteria, batch, x_recon_batch, z_mean, z_logvar, beta, batch_size)
+        loss_batch, loss_train_div, loss_train_recon = model.loss(device, div_criteria, batch, x_recon_batch, z_mean, z_logvar, beta, batch_size)
+        
+        #print(f'Loss batch: {loss_batch.item()}, Loss_batch_div: {loss_train_div.item()}, Loss_batch_recon: {loss_train_recon.item()}')
         
         loss_batch.backward()
         optimizer.step()
+        
+        
         loss_epoch += loss_batch.item()
+        loss_epoch_div += loss_train_div.item()
+        loss_epoch_recon += loss_train_recon.item()
         batch_count += 1
         
     #Average over total number of batches
     loss_epoch /= batch_count
+    loss_epoch_div /= batch_count
+    loss_epoch_recon /= batch_count
     
-    return loss_epoch
+    return loss_epoch, loss_epoch_div, loss_epoch_recon
 
 
 
@@ -109,9 +144,9 @@ def train(config, model, train_set, eval_set, epochs):
     
     device_name = config['experiment']['device']
     device = torch.device(device_name if torch.cuda.is_available() else 'cpu')
-    
-    print(f"Using device: {device}")
-    
+    best_loss_eval = float('inf')
+    latent_dim = config['model']['latent']
+    results_folder = 'results'
     
     #Load model into cuda device and choose optimizer
     model = model.to(device)
@@ -119,61 +154,102 @@ def train(config, model, train_set, eval_set, epochs):
         optimizer = torch.optim.Adam(model.parameters(), lr = config['model']['lr'])
     else: raise ValueError("Invalid optimizer")
 
-    loss_train = 0.0
     for epoch in range(epochs):
         #Train the model for this epoch
-        print(f'epoch nº: {epoch}')
-        loss_epoch = epoch_train(model, train_set, optimizer, config)
-        loss_train += loss_epoch
+        print(f'{Fore.YELLOW} Epoch nº: {epoch}')
+        loss_epoch, loss_epoch_div, loss_epoch_recon = epoch_train(model, train_set, optimizer, config)
         
         #Perform validation of the model
-        loss_eval = evaluation(model, eval_set, device, config)
+        loss_eval_epoch, loss_eval_div, loss_eval_recon = evaluation(model, eval_set, device, config, epoch)
         
         #Keep track through tensorboard
         writer.add_scalar('Loss/train', loss_epoch, epoch)
-        writer.add_scalar('Loss/evaluation', loss_eval, epoch)
-        writer.add_scalars('Loss/train-evaluation', {'loss train' : loss_epoch, 'loss evaluation' : loss_eval} , epoch)
+        writer.add_scalars('Loss_train/div-recon', {'loss train div' : loss_epoch_div, 'loss train recon' : loss_epoch_recon} , epoch)
+        
+        writer.add_scalar('Loss/evaluation', loss_eval_epoch, epoch)
+        writer.add_scalars('Loss_evaluation/div_recon', {'loss eval div' : loss_eval_div, 'loss eval recon': loss_eval_recon}, epoch)
+        
+        writer.add_scalars('Loss/train-evaluation', {'loss train' : loss_epoch, 'loss evaluation' : loss_eval_epoch} , epoch)
 
+
+        print(f'Epoch loss training: {loss_epoch}, validation loss: {loss_eval_epoch}')
+        print(f'Epoch div loss: {loss_epoch_div}, Epoch recon loss: {loss_epoch_recon}')
         
-        print(f'Epoch loss: {loss_epoch}, validation loss: {loss_eval}')
-    writer.close()
-        
-    loss_train /= epochs
+        # improvement_threshold = 0.01  
+        # if (best_loss_eval - loss_eval_epoch) / best_loss_eval > improvement_threshold:
+          if (best_loss_eval < loss_eval_epoch)
+            best_loss_eval = loss_eval_epoch
+            with open(os.path.join(results_folder, 'best_loss_eval.txt'), 'w') as file:
+                file.write(f'{best_loss_eval}\n')
+        model_save_path = 'vae_model.pth'
+        torch.save({
+            'epoch': epoch,
+            'model_state_dict': model.state_dict(),
+            'optimizer_state_dict': optimizer.state_dict(),
+            'loss_train': loss:epoch,
+            'loss_eval': loss_eval_epoch,
+            'loss_eval_div': loss_eval_div,
+            'loss_eval_recon': loss_eval_recon,
+            'latent_dim': latent_dim
+        }, model_save_path)
+        print(f'Modelo guardado en {model_save_path}')
+
 
     return model
 
+#______________________________________
 
-def evaluation(model, eval_set, device, config):
+#           EVALUATION
+#______________________________________
+
+
+def evaluation(model, eval_set, device, config, epoch):
     model.eval()
     
     beta = config['model']['loss']['beta']
     div_criteria = config['model']['divergence']
+    batch_size = config['model']['batch_size']
+    count = 0
     
-    eval_loss = 0.0
+    loss_eval = 0.0
+    loss_eval_div = 0.0
+    loss_eval_recon = 0.0
+    
+    random_idx = random.sample(range(int(len(eval_set) / batch_size)), 1)
+    
     
     with torch.no_grad():
-        for x in eval_set:
-            x_tensor = torch.tensor(x, dtype=torch.float32).to(device)
+        for x in generate_batches(eval_set, config):
+            x_tensor = x.clone().detach().float().to(device)
             
             recon_eval, _, z_mean, z_logvar = model(x_tensor)
             
-            if len(x_tensor.shape) == 3:
-                #Add dimension for [Batch_size] to fit expected dimensions in DSSIM
-                x_tensor = x_tensor.unsqueeze(0)
-                
+            if count == random_idx:
+                string_idx = f'epoch{epoch}_eval{count}'
+                make_grid_recon(recon_eval, string_idx)
+            
+            
             if len(recon_eval.shape) == 5:
-                #Remove extra dimension [Channel] from shape
                 recon_eval = recon_eval.squeeze(1)
             
-            _, _, loss_eval = model.loss(device, div_criteria, x_tensor, recon_eval, z_mean, z_logvar, beta, batch_size = 1)
+            loss_eval_batch , loss_eval_div_batch, loss_eval_recon_batch = model.loss(device, div_criteria, x_tensor, recon_eval, z_mean, z_logvar, beta, batch_size)
             
-            eval_loss += loss_eval
+            loss_eval += loss_eval_batch.item()
+            loss_eval_div += loss_eval_div_batch.item()
+            loss_eval_recon += loss_eval_recon_batch
+            count += 1
         
-        eval_loss /= len(eval_set)
+        loss_eval /= count
+        loss_eval_div /= count
+        loss_eval_recon /= count
         
-        return eval_loss
+        return loss_eval, loss_eval_div, loss_eval_recon
 
 
+#_________________________________
+
+#           TESTING
+#__________________________________
 
 
 
@@ -186,233 +262,106 @@ def test(config, test_set, model):
     of the model.
     """
     model.eval()
-    recon_test_imgs_list = []
-    z_test_list = []
+    
+    results_folder = 'results'
+    
+    batch_size = config['model']['batch_size']
+    #random_batch_index = random.randint(0, batch_size - 1)  # Elegir un batch aleatorio
+    #print(f'Random batch idx: {random_batch_index}')
+     
+    #Load hyperparameters and device
+    beta = config['model']['loss']['beta']
+    div_criteria = config['model']['divergence']
+    device_name = config['experiment']['device']
+    device = torch.device(device_name if torch.cuda.is_available() else 'cpu')
+        
+    #Load model again into cuda device
+    model = model.to(device)
+    loss_test = 0.0
+    count = 0
+    recon_img_list = []
+    z_list = []
+    z_mean_list = []
+    z_logvar_list = []
+        
+    input_tensor = np.array(test_set)
+    # Convert numpy array to a PyTorch tensor
+    input_tensor = torch.tensor(input_tensor, dtype=torch.float32).to(device)
+
+        
     with torch.no_grad():
-        
-        #Load hyperparameters and device
-        beta = config['model']['loss']['beta']
-        div_criteria = config['model']['divergence']
-        device_name = config['experiment']['device']
-        device = torch.device(device_name if torch.cuda.is_available() else 'cpu')
-    
-        print(f"Using device: {device}")
-        
-        #Load model again into cuda device
-        model = model.to(device)
-        
-        loss_img = 0.0
-        count = 0
-        loss_test = 0.0
-        
-        for img in test_set:
-            #send img to GPU
-            input_tensor = torch.tensor(img, dtype=torch.float32).to(device)
+        for x in generate_batches(test_set, config):
             
-            #We need to add an extra dimension for [Batch_size] because it is
-            #needed for x.shape[0] in DSSIM computation
-            if len(input_tensor.shape) == 3:
-                input_tensor = input_tensor.unsqueeze(0)
-            #Encode and decode img
-            recon_img, z, z_mean, z_logvar = model(input_tensor)  
+            recon_batch, z, z_mean, z_logvar = model(x)
             
-            #ADD Z TO Z_TEST_LIST TO PLOT LATER
-            z_test_list.append(z)
-            if len(recon_img.shape) == 5:
-                #Remove extra dimension [Channel] from shape
-                recon_img = recon_img.squeeze(1)    
+            if count % 20 == 0:
+                #print(f'shape of recon_batch_ {recon_batch.shape}')
+                string_1 = f'test_recon_batchnum_{count}'
+                make_grid_recon(recon_batch, string_1)
+                string_2 = f'test_input_batchnum_{count}'
+                x = x.unsqueeze(1)
+                make_grid_recon(x, string_2)
             
-            #compute loss between reconstructed image and input image
-            _, _, loss_img = model.loss(device, div_criteria, input_tensor, recon_img, z_mean, z_logvar, beta, batch_size = 1)
-            #print(f'Loss of testing number {count}: {loss_img}')
+            if len(recon_batch.shape) == 5:
+                recon_batch = recon_batch.squeeze(1)
+            recon_img_list.extend(recon_batch)
+            z_list.extend(z)
+            z_mean_list.extend(z_mean)
+            z_logvar_list.extend(z_logvar)
+
             
-            #Add to list
-            recon_test_imgs_list.append(recon_img)
-            
-            loss_test += loss_img
+            loss_batch, _, _ = model.loss(device, div_criteria, x, recon_batch, z_mean, z_logvar, beta, batch_size)
+            loss_test += loss_batch
             count += 1
-            
-            if count == len(test_set):  #Convert last volume into .nii to check model
-                tensor_to_nii(input_tensor, recon_img)
-                reconstruction_diff(input_tensor, recon_img)
-            
-        loss_test /= count   
+        
+        loss_test /= count
+        
         print(f'Total loss of testing: {loss_test}') 
-            
-    return recon_test_imgs_list, z_test_list
-
-
-
-def tensor_to_nii(x_input, x_recon):
-    """
-    This function transforms an input volume tensor 'x_input' into a .nii
-    volume 'x_recon'
-    """
-    
-    x_recon = x_recon.squeeze(0) #Erase channel dimension
-    x_numpy = x_recon.cpu().detach().numpy()
-    x_nifti_recon = nib.Nifti1Image(x_numpy, affine = np.eye(4))
-    
-    x_input = x_input.squeeze(0)
-    x_input = x_input.cpu().detach().numpy()
-    x_nifti_input = nib.Nifti1Image(x_input, affine = np.eye(4))
-    nib.save(x_nifti_recon, 'reconstructed_test_volume.nii')
-    nib.save(x_nifti_input, 'normalised_test_volume.nii')
-    return 
-
-
-
-def plot_latent_space_ADAS(z_list, id_ses_list, df_ADNIMERGE, path_test, config):
-    """
-    Function for plotting latent_dim x against latent_dim for test_set.
-    Each point in the scatterplot is colorcoded by its ADAS score.
-        Args:
         
-            -z_list: List of dimensions (length(test_set), lat_space). Contains
-            the latent space of every test_set subject (or whatever we feed the function)
-            
-            -test_id_ses: List of tuples (ID, SES, ADAS) of each test_set subject. The order
-            of z_list matches the order of test_id_ses (they are sorted together)
-            
-            -df_ADNIMERGE: ADNIMERGE dataframe containing the information of every subject of
-            the study (More subjects than our database).
-            
-            -config: configuration file with hyprparameters. Used to obtain latent_dim.
-    """
-    sub_folder = "scatter_images"
-    if not os.path.exists(sub_folder):
-        os.makedirs(sub_folder)
-    
-    
-    latent_dim = config['model']['latent']
-    latents_plot = np.arange(latent_dim)
-    #MERGE ADNIMERGE DATASET WITH TEST_ID_SES AND GET DF (ID, SES, ADAS13)
-    df_ID_SES_ADAS = merge_id_ses_to_ADNIMERGE(id_ses_list, df_ADNIMERGE)
-    
-    #SORT ADNIMERGE INTO SAME ORDER AS MY SUBJECT DATASET
-    df_order = pd.DataFrame(id_ses_list, columns = ['PTID', 'VISCODE'])
-    df_order.set_index(['PTID', 'VISCODE'], inplace=True)
-    
-    df_ID_SES_ADAS = df_ID_SES_ADAS.set_index(['PTID', 'VISCODE'])
-    df_ADAS = df_ID_SES_ADAS.loc[df_order.index]
-    #GET THE INDEX LIST TO PRINT INTO FILE
-    index_ADAS = df_ADAS.index
-
-    ADAS_list = df_ADAS['ADAS13'].tolist()
-    
-    
-    
-    #FOR DEBUGGING PURPOSES. SAVE INTO FILE PATH_ID AND ADNIMERGE_ID
-    debugging = config['experiment']['debugging']
-    
-    if debugging == True:
         
-        with open('IDX_order_ADNI_BIDS.txt', 'w') as file:
-            for item in id_ses_list:
-                file.write(f'{item}\n')
-        
-        with open('IDX_order_ADNI_BIDS.txt', 'w') as file:
+        with open(os.path.join(results_folder, 'z_test.txt'), 'w') as file:
             for item in z_list:
+                item = item.detach().cpu().numpy()
                 file.write(f'{item}\n')
-        
-        
-        path_test = extract_id_ses_from_path(path_test)
-        test_path_ID_SES = merge_lists(path_test, id_ses_list)
-        test_ADNIMERGE_path_ID_SES = merge_lists(test_path_ID_SES, index_ADAS)
-        columns = ["test_path_ADNI_BIDS", "test_ADNIBIDS_ID_SES", "test_ADNIMERGE_ID_SES"]
-        with open('paths_ID_SES.txt', 'w') as file:
-            file.write('\t'.join(columns) + '\n')
-            for item in test_ADNIMERGE_path_ID_SES:
+                
+        with open(os.path.join(results_folder, 'z_mean_test.txt'), 'w') as file:
+            for item in z_mean_list:
+                item = torch.exp(0.5 * z_logvar)
+                item = item.detach().cpu().numpy()
+                file.write(f'{item}\n')                
+                
+        with open(os.path.join(results_folder, 'z_logvar_test.txt'), 'w') as file:
+            for item in z_logvar_list:
+                item = torch.exp(0.5 * z_logvar)
+                item = item.detach().cpu().numpy()
                 file.write(f'{item}\n')
-        
-
-    for latx in latents_plot:
-        for laty in latents_plot:
-            if latx != laty:
-                dim_x = [tensor.cpu().numpy()[0][latx] for tensor in z_list] #GET DIM X OF LATENT SPACE
-                dim_y = [tensor.cpu().numpy()[0][laty] for tensor in z_list] #GET DIM Y OF LATENT SPACE
-                
-                plt.figure(figsize = (8, 6))
-                plt.scatter(dim_x, dim_y, c = ADAS_list, cmap='viridis', edgecolors='k')
-
-                plt.xlabel(f'Latent dim {latx}')
-                plt.ylabel(f'Latent dim {laty}')
-                plt.title (f'Latent dim {latx} vs {laty}')
-
-                plt.colorbar(label='ADAS13')
-                plt.savefig(f'{sub_folder}/scatter_plot_dim{latent_dim}_lat{latx}_lat{laty}.png', format='png', dpi=300, bbox_inches='tight')
-                plt.close()
-    return None
-
-def reconstruction_diff(x, y):
-    """
-    This function measures the reconstruction difference between two volumes.
-    Difference is performed by direct substraction of pixels.
-    """
-    x = x.squeeze(0) #Erase channel dimension (We need 3dims)
-    y = y.squeeze(0) #Erase channel dimension (We need 3dims)
-    recon_img = x - y
-    recon_img_np = recon_img.detach().cpu().numpy()
-    nii_recon_diff = nib.Nifti1Image(recon_img_np, affine = np.eye(4))
-    nib.save(nii_recon_diff, 'ImageDiff.nii')
-    return recon_img
-
-
-def plot_latentx_vs_ADAS(z_list, id_ses_list, df_ADNIMERGE, path_test, config):
-    """
-    Function for plotting latent_dim x against latent_dim for test_set.
-    Each point in the scatterplot is colorcoded by its ADAS score.
-        Args:
-        
-            -z_list: List of dimensions (length(test_set), lat_space). Contains
-            the latent space of every test_set subject (or whatever we feed the function)
             
-            -test_id_ses: List of tuples (ID, SES, ADAS) of each test_set subject. The order
-            of z_list matches the order of test_id_ses (they are sorted together)
-            
-            -df_ADNIMERGE: ADNIMERGE dataframe containing the information of every subject of
-            the study (More subjects than our database).
-            
-            -config: configuration file with hyprparameters. Used to obtain latent_dim.
-    """
-    sub_folder = "scatter_images_latx_VS_ADAS"
-    if not os.path.exists(sub_folder):
-        os.makedirs(sub_folder)
-    
-    latent_dim = config['model']['latent']
-    latents_plot = np.arange(latent_dim)
-    #MERGE ADNIMERGE DATASET WITH TEST_ID_SES AND GET DF (ID, SES, ADAS13)
-    df_ID_SES_ADAS = merge_id_ses_to_ADNIMERGE(id_ses_list, df_ADNIMERGE)
-    
-    #SORT ADNIMERGE INTO SAME ORDER AS MY SUBJECT DATASET
-    df_order = pd.DataFrame(id_ses_list, columns = ['PTID', 'VISCODE'])
-    df_order.set_index(['PTID', 'VISCODE'], inplace=True)
-    
-    df_ID_SES_ADAS = df_ID_SES_ADAS.set_index(['PTID', 'VISCODE'])
-    df_ADAS = df_ID_SES_ADAS.loc[df_order.index]
+    return recon_img_list, z_list
 
 
-    ADAS_list = df_ADAS['ADAS13'].tolist() #THIS IS THE SORTED LIST OF ADAS TO USE
-    
-    
-    for latx in latents_plot:
-            dim_x = [tensor.cpu().numpy()[0][latx] for tensor in z_list] #GET DIM X OF LATENT SPACE
-                
-            plt.figure(figsize = (8, 6))
-            plt.scatter(dim_x, ADAS_list)
 
-            plt.xlabel(f'Latent dim {latx}')
-            plt.ylabel(f'ADAS13')
 
-            plt.savefig(f'{sub_folder}/scatter_plot_dim{latent_dim}_lat{latx}.png', format='png', dpi=300, bbox_inches='tight')
-            plt.close()
-    return None
+#___________________________________________________________________________________
 
 
 
 
 if __name__ == '__main__':
+    
+    if sys.stdout.isatty():
+       init(autoreset=True)
+    else:
+        init(autoreset=True, strip=True) 
+        
     config_file = 'config.yaml'
+    
+    #CREATE FOLDER FOR RESULTS
+    results_folder = "results"
+    
+    model_save_path = 'vae_model.pth'
+    if not os.path.exists(results_folder):
+        os.makedirs(results_folder)
+        
     
     #LOAD HYPERPARAMETERS FROM CONFIG FILE
 
@@ -423,24 +372,39 @@ if __name__ == '__main__':
     prefix = config['loader']['load_folder']['prefix']
     extension = config['loader']['load_folder']['extension']
     target_folder_name = config['loader']['load_folder']['target_folder_name']
+    div_criteria = config['model']['divergence']
+    print(f'Using divergence {div_criteria}')
     
     epochs = config['model']['epochs']    
-    device = config['experiment']['device']
+    device_name = config['experiment']['device']
+    device = torch.device(device_name if torch.cuda.is_available() else 'cpu')
+    
+    print(f"Using device: {device}")
     splits = config['loader']['splits']
     path_ADNIMERGE = config['loader']['load_ADNIMERGE']
+    normalization = config['experiment']['normalization']
     
     
     #LOAD IMAGES AND APPLY NORMALIZATION
     imgs_paths = find_pet(folder, prefix, extension, target_folder_name)
     imgs_list = load_img_nii(imgs_paths)
-    imgs_list_norm = normalization_cerebellum(config, imgs_list)
+    
+    print(f'Loading of images terminated.')
     
     #OBTAIN ID AND SESSION AND TRANSFORM INTO ADNIMERGE FORMAT
     id_ses_list = extract_id_ses_from_path(imgs_paths)
     id_ses_list_formated = transform_string(id_ses_list)
     
-    #MERGE IMGS_LIST_NORM INTO (ID, SES) LIST 
-    imgs_IDSES_tuple = merge_lists(imgs_list_norm, id_ses_list_formated)
+    #CHOOSE BETWEEN RAW DATA OR NORMALISED DATA
+    if normalization == True:
+        imgs_list_norm = normalization_min(imgs_list)
+        print(f'Normalization of images terminated')
+        #MERGE IMGS_LIST_NORM INTO (ID, SES) LIST 
+        imgs_IDSES_tuple = merge_lists(imgs_list_norm, id_ses_list_formated)
+    else:
+        imgs_IDSES_tuple = merge_lists(imgs_list, id_ses_list_formated)
+            
+
     
     #MERGE INTO A LIST OF FORMAT (PATH, (IMGS, (ID, SES)))
     #TO KEEP TRACK OF IDs
@@ -458,7 +422,18 @@ if __name__ == '__main__':
 
     #WE ONLY NEED (ID, SES) FOR TEST SET AND PATHS FOR DEBUGGING
     path_test, test_set = split_list(test_set)
-    test_set, test_id_ses = split_list(test_set) 
+    test_set, test_id_ses = split_list(test_set)
+    
+    
+    paths_test_dir = os.path.join(results_folder, "paths_test_dir")
+    if not os.path.exists(os.path.join(paths_test_dir)):
+        os.makedirs(paths_test_dir)
+        
+    with open(f'{paths_test_dir}/paths_test.txt', 'w') as file:
+        for item in path_test:
+            file.write(f'{item}\n')    
+    
+    
 
     print(f'Length of train_set: {len(train_set)}, eval_set: {len(eval_set)}')
     print(f'Length of test_set: {len(test_set)}. Length of (ID, SES) list: {len(test_id_ses)}')
@@ -467,13 +442,25 @@ if __name__ == '__main__':
     
     #LOAD MODEL AND TRAIN
     model = model_VAE(config)
+    print('____________________________________________')
+    print(Fore.RED + 'Start of training')
     model = train(config, model, train_set, eval_set, epochs)  
-    print(f'Training terminated')
+    print(Fore.RED + 'Training terminated')
+    print('____________________________________________')
+    
+    print('Loading best saved model')
+    checkpoint = torch.load(model_save_path)
+    model.load_state_dict(checkpoint['model_state_dict'])
     
     #PERFORM TESTING
     recon_eval_imgs_list, z_test_list = test(config, test_set, model)
+    print(Fore.CYAN + 'Test terminated')
     
+    print('Starting plot of results')
     plot_latent_space_ADAS(z_test_list, test_id_ses, df_ADNIMERGE, path_test, config)
     plot_latentx_vs_ADAS(z_test_list, test_id_ses, df_ADNIMERGE, path_test, config)
-
+    plot_latent_space_VENTRICLES(z_test_list, test_id_ses, df_ADNIMERGE, path_test, config)
+    plot_latentx_vs_VENTRICLES(z_test_list, test_id_ses, df_ADNIMERGE, path_test, config)
+    SVR_ADAS(z_test_list, test_id_ses, df_ADNIMERGE, path_test, config)
+    SVR_VENTRICLES(z_test_list, test_id_ses, df_ADNIMERGE, path_test, config)
     
